@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор сложных комбинаций</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #333;
+            transition: border-color 0.2s;
+        }
+        .card:hover {
+            border-color: #555;
+        }
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .icon-btn {
+            color: #888;
+            cursor: pointer;
+            transition: color 0.2s;
+            background: none;
+            border: none;
+            font-size: 1.1rem;
+            padding: 0;
+        }
+        .icon-btn:hover {
+            color: #fff;
+        }
+        .delete-btn:hover {
+            color: #ff4444;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <!-- Заголовок -->
+        <h1 class="text-2xl font-bold mb-2">Комплексные комбинации (6 цифр)</h1>
+        <p class="text-gray-400 mb-6">
+            Исключены 25 чисел с фото и все простые шаблоны. Все ваши удаления сохраняются автоматически.<br>
+            Осталось комбинаций: <span id="totalCount" class="text-white font-bold">...</span><br>
+            <span class="text-sm text-gray-500">Удалено вручную: <span id="deletedCount" class="text-red-400 font-bold">0</span></span>
+        </p>
+
+        <!-- Панель управления -->
+        <div class="flex flex-col md:flex-row gap-4 mb-6">
+            <input type="text" id="searchInput" placeholder="Поиск комбинации (например, 123456)..." class="flex-1 bg-[#1e1e1e] border border-[#333] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+            <button onclick="downloadTxt()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                💾 Скачать файл (.txt)
+            </button>
+            <button onclick="resetDeletions()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                ♻️ Сбросить удаления
+            </button>
+        </div>
+
+        <!-- Сетка с числами -->
+        <div id="grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+            <!-- Сюда будут генерироваться карточки -->
+        </div>
+
+        <!-- Кнопка "Показать еще" -->
+        <div class="text-center pb-10">
+            <button id="loadMoreBtn" onclick="loadMore()" class="bg-[#2d2d2d] hover:bg-[#3d3d3d] text-white font-bold py-3 px-8 rounded-lg transition-colors border border-[#444]">
+                Показать еще 1000 комбинаций
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ================== 1. ИСКЛЮЧЕНИЯ ==================
+        const excludedNumbers = new Set([
+            "583104", "406827", "294705", "918425", "572803", "703518", "825037", "940613", "674209", "791354", "157903", "305794", "270538",
+            "729461", "851306", "637182", "360591", "184629", "496271", "261948", "318572", "502836", "438160", "862417", "649281"
+        ]);
+
+        // ================== 2. ЗАГРУЗКА СОХРАНЕННЫХ УДАЛЕНИЙ ==================
+        // Ключ в localStorage, чтобы данные хранились в браузере пользователя
+        const STORAGE_KEY = 'deletedCombinations_v1';
+        
+        // Загружаем удаленные числа из памяти браузера (если они есть)
+        let userDeletedNumbers = new Set();
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                userDeletedNumbers = new Set(parsed);
+            }
+        } catch (e) {
+            console.error('Ошибка загрузки сохранений:', e);
+        }
+
+        // Сохраняем в localStorage
+        function saveDeletions() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify([...userDeletedNumbers]));
+            } catch (e) {
+                console.error('Ошибка сохранения:', e);
+            }
+        }
+
+        // ================== 3. ФИЛЬТР "ПРОСТОТЫ" ==================
+        function isTooSimple(str) {
+            if (/(\d)\1/.test(str)) return true; // Две одинаковые подряд
+            let counts = {};
+            for (let char of str) {
+                counts[char] = (counts[char] || 0) + 1;
+                if (counts[char] >= 3) return true; // 3+ одинаковых
+            }
+            if (Object.keys(counts).length < 4) return true; // Менее 4 уникальных цифр
+            if (/(\d\d)\1/.test(str)) return true; // Повторяющиеся блоки
+            
+            let step = parseInt(str[1]) - parseInt(str[0]);
+            if (step === 1 || step === -1 || step === 2 || step === -2) {
+                let isSequence = true;
+                for (let i = 1; i < 5; i++) {
+                    if (parseInt(str[i+1]) - parseInt(str[i]) !== step) {
+                        isSequence = false; break;
+                    }
+                }
+                if (isSequence) return true;
+            }
+            return false;
+        }
+
+        // ================== 4. ГЕНЕРАЦИЯ СПИСКА ==================
+        function generateBaseList() {
+            let list = [];
+            for (let i = 0; i < 1000000; i++) {
+                let numStr = i.toString().padStart(6, '0'); 
+                if (excludedNumbers.has(numStr)) continue; 
+                if (userDeletedNumbers.has(numStr)) continue; // Учитываем сохраненные удаления
+                if (isTooSimple(numStr)) continue; 
+                list.push(numStr);
+            }
+            return list;
+        }
+
+        let allCombinations = generateBaseList();
+
+        // ================== 5. ПЕРЕМЕННЫЕ ОТОБРАЖЕНИЯ ==================
+        let currentIndex = 0;
+        const CHUNK_SIZE = 1000; 
+        const grid = document.getElementById('grid');
+        const loadMoreBtn = document.getElementById('loadMoreBtn');
+        let filteredArray = [...allCombinations]; 
+
+        // Обновляем счетчики
+        function updateCounters() {
+            document.getElementById('totalCount').textContent = allCombinations.length.toLocaleString('ru-RU');
+            document.getElementById('deletedCount').textContent = userDeletedNumbers.size.toLocaleString('ru-RU');
+        }
+        updateCounters();
+
+        // ================== 6. ОТРИСОВКА КАРТОЧЕК ==================
+        function renderChunk() {
+            const fragment = document.createDocumentFragment();
+            const end = Math.min(currentIndex + CHUNK_SIZE, filteredArray.length);
+
+            for (let i = currentIndex; i < end; i++) {
+                const num = filteredArray[i];
+                const div = document.createElement('div');
+                div.className = 'card';
+                div.innerHTML = `
+                    <span class="font-mono text-lg tracking-wider">${num}</span>
+                    <div class="btn-group">
+                        <button class="icon-btn" onclick="copyToClipboard('${num}')" title="Скопировать">📋</button>
+                        <button class="icon-btn delete-btn" onclick="deleteCombination('${num}', this)" title="Удалить из списка">🗑️</button>
+                    </div>
+                `;
+                fragment.appendChild(div);
+            }
+
+            grid.appendChild(fragment);
+            currentIndex = end;
+
+            loadMoreBtn.style.display = currentIndex >= filteredArray.length ? 'none' : 'inline-block';
+        }
+
+        // ================== 7. ПОДГРУЗКА ==================
+        function loadMore() {
+            loadMoreBtn.textContent = "Загрузка...";
+            setTimeout(() => {
+                renderChunk();
+                loadMoreBtn.textContent = `Показать еще ${CHUNK_SIZE} комбинаций`;
+            }, 50);
+        }
+
+        // ================== 8. КОПИРОВАНИЕ ==================
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast(`Скопировано: ${text}`, '#4CAF50');
+            });
+        }
+
+        // ================== 9. УДАЛЕНИЕ (с сохранением) ==================
+        function deleteCombination(numStr, btnElement) {
+            // 1. Добавляем в набор удаленных и сохраняем в браузере
+            userDeletedNumbers.add(numStr);
+            saveDeletions();
+
+            // 2. Удаляем из рабочих массивов
+            const indexAll = allCombinations.indexOf(numStr);
+            if (indexAll > -1) allCombinations.splice(indexAll, 1);
+
+            const indexFiltered = filteredArray.indexOf(numStr);
+            if (indexFiltered > -1) filteredArray.splice(indexFiltered, 1);
+
+            // 3. Визуально удаляем карточку
+            const card = btnElement.closest('.card');
+            if (card) {
+                card.style.opacity = '0';
+                card.style.transform = 'scale(0.95)';
+                card.style.transition = 'all 0.2s';
+                setTimeout(() => card.remove(), 200);
+            }
+
+            // 4. Обновляем счетчики
+            updateCounters();
+            showToast(`Удалено: ${numStr}`, '#ff4444');
+        }
+
+        // ================== 10. СБРОС ВСЕХ УДАЛЕНИЙ ==================
+        function resetDeletions() {
+            if (userDeletedNumbers.size === 0) {
+                showToast('Список удалений уже пуст', '#666');
+                return;
+            }
+            if (!confirm(`Вы уверены? Будет восстановлено ${userDeletedNumbers.size} комбинаций.`)) return;
+
+            // Очищаем localStorage
+            localStorage.removeItem(STORAGE_KEY);
+            userDeletedNumbers.clear();
+
+            // Перегенерируем базовый список
+            allCombinations = generateBaseList();
+            filteredArray = [...allCombinations];
+            currentIndex = 0;
+            grid.innerHTML = '';
+            
+            updateCounters();
+            renderChunk();
+            showToast('Все удаления сброшены!', '#4CAF50');
+        }
+
+        // ================== 11. УВЕДОМЛЕНИЯ ==================
+        function showToast(message, bgColor) {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = `position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:${bgColor}; color:white; padding:10px 20px; border-radius:5px; z-index:1000; transition: opacity 0.5s; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.3);`;
+            document.body.appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 1500);
+        }
+
+        // ================== 12. ПОИСК ==================
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const query = e.target.value.trim();
+            grid.innerHTML = '';
+            currentIndex = 0;
+
+            filteredArray = query === '' 
+                ? [...allCombinations] 
+                : allCombinations.filter(num => num.includes(query));
+            
+            loadMoreBtn.style.display = 'inline-block';
+            loadMoreBtn.textContent = `Показать еще ${CHUNK_SIZE} комбинаций`;
+            
+            if (filteredArray.length === 0) {
+                grid.innerHTML = '<p class="text-gray-500 col-span-2 text-center py-10">Ничего не найдено</p>';
+                loadMoreBtn.style.display = 'none';
+            } else {
+                renderChunk();
+            }
+        });
+
+        // ================== 13. СКАЧИВАНИЕ ==================
+        function downloadTxt() {
+            if (allCombinations.length === 0) {
+                showToast('Список пуст!', '#ff4444');
+                return;
+            }
+            const blob = new Blob([allCombinations.join('\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'complex_combinations.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ================== 14. ЗАПУСК ==================
+        renderChunk();
+
+    </script>
+</body>
+</html>
